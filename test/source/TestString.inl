@@ -17,6 +17,36 @@ template<typename StringType>
 int TEST_STRING_NAME()
 {
 	int nErrorCount = 0;
+	
+	// SSO (short string optimization) tests
+	{
+		struct Failocator
+		{
+			Failocator() = default;
+			Failocator(const char*) {} 
+
+			void* allocate(size_t n) { EA_FAIL(); return nullptr; }
+			void deallocate(void* p, size_t) { EA_FAIL(); }
+		};
+
+		// Use custom string type that always fails to allocate memory to highlight when SSO is not functioning correctly.
+		typedef eastl::basic_string<typename StringType::value_type, Failocator> SSOString;
+
+		{
+			SSOString str;
+			VERIFY(str.validate());
+			VERIFY(str.empty());
+		}
+
+		if(!(sizeof(typename StringType::value_type) >= 4) && (EA_PLATFORM_WORD_SIZE == 4))  // not even a single char32_t (plus null-terminator) can fit into the SSO buffer on 32-bit platforms
+		{
+			auto* pLiteral = LITERAL("a");
+			SSOString str(pLiteral);
+			VERIFY(str == pLiteral);
+			VERIFY(str.validate());
+			VERIFY(EA::StdC::Strcmp(str.data(), pLiteral) == 0);
+		}
+	}
 
 	// basic_string();
 	{
@@ -28,7 +58,7 @@ int TEST_STRING_NAME()
 
 	// explicit basic_string(const allocator_type& allocator);
 	{ 
-		eastl::allocator alloc;
+		typename StringType::allocator_type alloc;
 		StringType str(alloc);
 		VERIFY(str.validate());
 	}
@@ -60,13 +90,13 @@ int TEST_STRING_NAME()
 		VERIFY(str2 == LITERAL("def"));
 		VERIFY(str2.size() == 3);
 		VERIFY(str2.length() == 3);
-		VERIFY(str2.capacity() == 3);
+		VERIFY(str2.capacity() >= 3);  // SSO buffer size
 
 		StringType str3(str1, 25, 3);
 		VERIFY(str3 == LITERAL("z"));
 		VERIFY(str3.size() == 1);
 		VERIFY(str3.length() == 1);
-		VERIFY(str3.capacity() == 1);
+		VERIFY(str3.capacity() >= 1); // SSO buffer size 
 
 		VERIFY(str1.validate());
 		VERIFY(str2.validate());
@@ -130,9 +160,17 @@ int TEST_STRING_NAME()
 	// basic_string(CtorSprintf, const value_type* pFormat, ...);
 	{
 	#if EASTL_SNPRINTF_TESTS_ENABLED
-		StringType str(typename StringType::CtorSprintf(), LITERAL("Hello, %d"), 42);
-		VERIFY(str == LITERAL("Hello, 42"));
-		VERIFY(str.validate());
+		{
+			StringType str(typename StringType::CtorSprintf(), LITERAL("Hello, %d"), 42);
+			VERIFY(str == LITERAL("Hello, 42"));
+			VERIFY(str.validate());
+		}
+
+		{
+			StringType str(typename StringType::CtorSprintf(), LITERAL("Hello, %d %d %d %d %d %d %d %d %d"), 42, 42, 42, 42, 42, 42, 42, 42, 42);
+			VERIFY(str == LITERAL("Hello, 42 42 42 42 42 42 42 42 42"));
+			VERIFY(str.validate());
+		}
 	#endif
 	}
 
@@ -244,28 +282,28 @@ int TEST_STRING_NAME()
 	{
 		{
 		#if defined(EA_CHAR8)
-			StringType str(typename StringType::CtorConvert(), eastl::basic_string<char8_t>(EA_CHAR8("123456789")));
+			StringType str(typename StringType::CtorConvert(), eastl::basic_string<char8_t, typename StringType::allocator_type>(EA_CHAR8("123456789")));
 			VERIFY(str == LITERAL("123456789"));
 			VERIFY(str.validate());
 		#endif
 		}
 		{
 		#if defined(EA_CHAR16)
-			StringType str(typename StringType::CtorConvert(), eastl::basic_string<char16_t>(EA_CHAR16("123456789")));
+			StringType str(typename StringType::CtorConvert(), eastl::basic_string<char16_t, typename StringType::allocator_type>(EA_CHAR16("123456789")));
 			VERIFY(str == LITERAL("123456789"));
 			VERIFY(str.validate());
 		#endif
 		}
 		{
 		#if defined(EA_CHAR32)
-			StringType str(typename StringType::CtorConvert(), eastl::basic_string<char32_t>(EA_CHAR32("123456789")));
+			StringType str(typename StringType::CtorConvert(), eastl::basic_string<char32_t, typename StringType::allocator_type>(EA_CHAR32("123456789")));
 			VERIFY(str == LITERAL("123456789"));
 			VERIFY(str.validate());
 		#endif
 		}
 		{
 		// #if defined(EA_WCHAR)
-		//     StringType str(typename StringType::CtorConvert(), eastl::basic_string<wchar_t>(EA_WCHAR("123456789")));
+		//     StringType str(typename StringType::CtorConvert(), eastl::basic_string<wchar_t, StringType::allocator_type>(EA_WCHAR("123456789")));
 		//     VERIFY(str == LITERAL("123456789"));
 		//     VERIFY(str.validate());
 		// #endif
@@ -786,7 +824,7 @@ int TEST_STRING_NAME()
 		VERIFY(str.capacity() >= 26);  // should not free existing capacity
 
 		str.set_capacity(0);
-		VERIFY(str.capacity() == 0); // frees existing capacity
+		// VERIFY(str.capacity() == 0); // frees existing capacity, but has a minimun of SSO capacity
 
 		str.resize(32, LITERAL('c'));
 		VERIFY(!str.empty());
@@ -895,7 +933,7 @@ int TEST_STRING_NAME()
 		const StringType src(LITERAL("abcdefghijklmnopqrstuvwxyz"));
 
 		StringType str;
-		str.append( StringType(LITERAL("abcd")));   	// "abcd"
+		str.append(StringType(LITERAL("abcd")));        // "abcd"
 		str.append(src, 4, 4); 		   					// "abcdefgh"
 		str.append(src.data() + 8, 4); 					// "abcdefghijkl"
 		str.append(LITERAL("mnop"));   					// "abcdefghijklmnop"
@@ -1115,6 +1153,11 @@ int TEST_STRING_NAME()
 
 		str.erase(str.find(LITERAL('g')), str.find(LITERAL('i')));
 		VERIFY(str == LITERAL("fju"));
+
+		typename StringType::const_iterator it = str.begin() + 1; // 'j'
+		str.erase(it);
+		VERIFY(str == LITERAL("fu"));
+
 	}
 
 	// void clear() EA_NOEXCEPT;
@@ -1128,8 +1171,59 @@ int TEST_STRING_NAME()
 		VERIFY(str.validate());
 	}
 
-	// void reset_lose_memory() EA_NOEXCEPT;
+
+	// pointer detach() EA_NOEXCEPT;
 	{
+		{
+			// Heap 
+			auto* pLiteral = LITERAL("abcdefghijklmnopqrstuvwxyz");
+			StringType str(pLiteral);
+			const auto sz = str.size() + 1;  // +1 for null-terminator
+
+			auto* pDetach = str.detach();
+
+			VERIFY(pDetach != nullptr);
+			VERIFY(EA::StdC::Strcmp(pDetach, pLiteral) == 0);
+			VERIFY(pDetach != pLiteral);
+			VERIFY(str.empty());
+			VERIFY(str.size() == 0);
+
+			str.get_allocator().deallocate(pDetach, sz); 
+		}
+
+		{
+			// SSO 
+			auto* pLiteral = LITERAL("a");
+			StringType str(pLiteral);
+			const auto sz = str.size() + 1;  // +1 for null-terminator
+
+			auto* pDetach = str.detach();
+
+			VERIFY(pDetach != nullptr);
+			VERIFY(EA::StdC::Strcmp(pDetach, pLiteral) == 0);
+			VERIFY(pDetach != pLiteral);
+			VERIFY(str.empty());
+			VERIFY(str.size() == 0);
+
+			str.get_allocator().deallocate(pDetach, sz); 
+		}
+
+		{
+			// SSO, empty string
+			auto* pLiteral = LITERAL("");
+			StringType str(pLiteral);
+			const auto sz = str.size() + 1;  // +1 for null-terminator
+
+			auto* pDetach = str.detach();
+
+			VERIFY(pDetach != nullptr);
+			VERIFY(EA::StdC::Strcmp(pDetach, pLiteral) == 0);
+			VERIFY(pDetach != pLiteral);
+			VERIFY(str.empty());
+			VERIFY(str.size() == 0);
+
+			str.get_allocator().deallocate(pDetach, sz); 
+		}
 	}
 
 	// this_type&  replace(size_type position, size_type n, const this_type& x);
@@ -1428,6 +1522,35 @@ int TEST_STRING_NAME()
 		VERIFY(str == LITERAL("Hello, 42"));
 	#endif
 	}
+
+	// void force_size(size_type n);
+	{
+		StringType str(LITERAL(""));
+		str.reserve(10);
+
+		auto p = const_cast<typename StringType::value_type*>(str.data());
+		p[0] = 'a';
+		p[1] = 'a';
+		p[2] = 'a';
+
+		str.force_size(3);
+
+		VERIFY(str.size() == 3);
+		VERIFY(str.validate());
+		VERIFY(!str.empty());
+	}
+
+	// test basic_string implicit conversion to basic_string_view
+	// 		eastl::string implicitly converts to eastl::string_view.
+	{
+		StringType str(LITERAL("abcdefghijklmnopqrstuvwxyz"));
+		[&](basic_string_view<typename StringType::value_type> sv)  // simulate api that requires eastl::string_view.
+		{
+			VERIFY(sv.compare(LITERAL("abcdefghijklmnopqrstuvwxyz")) == 0);
+		}(str);
+	}
+
+
 
 	return nErrorCount;
 }

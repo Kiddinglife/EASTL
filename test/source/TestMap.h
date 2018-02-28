@@ -11,15 +11,9 @@
 #include <EASTL/random.h>
 
 #ifndef EA_COMPILER_NO_STANDARD_CPP_LIBRARY
-	#ifdef _MSC_VER
-		#pragma warning(push, 0)
-	#endif
-
+	EA_DISABLE_ALL_VC_WARNINGS()
 	#include <algorithm>
-
-	#ifdef _MSC_VER
-		#pragma warning(pop)
-	#endif
+	EA_RESTORE_ALL_VC_WARNINGS()
 #endif
 
 
@@ -1000,11 +994,28 @@ int TestMultimapCpp11()
 	return nErrorCount;
 }
 
+template<typename HashContainer>
+struct HashContainerReserveTest
+{
+	int operator()()
+	{
+		int nErrorCount = 0;
 
+		HashContainer hashContainer;
 
+		const typename HashContainer::size_type reserve_sizes[] = {16, 128, 4096, 32768};
+		for (auto& reserve_size : reserve_sizes)
+		{
+			hashContainer.reserve(reserve_size);
 
+			// verify bucket count and hashtable load_factor requirements
+			VERIFY(hashContainer.bucket_count() >= reserve_size);
+			VERIFY(hashContainer.load_factor() <= ceilf(reserve_size / hashContainer.get_max_load_factor()));
+		}
 
-
+		return nErrorCount;
+	}
+};
 
 
 

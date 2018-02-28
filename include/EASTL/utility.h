@@ -16,6 +16,8 @@
 
 #include <EASTL/internal/integer_sequence.h>
 #include <EASTL/internal/tuple_fwd_decls.h>
+#include <EASTL/internal/in_place_t.h>
+#include <EASTL/internal/piecewise_construct_t.h>
 
 #ifdef _MSC_VER
 	#pragma warning(push)           // VC++ generates a bogus warning that you cannot code away.
@@ -289,6 +291,8 @@ namespace eastl
 		eastl::swap_ranges(a, a + N, b);
 	}
 
+#if EASTL_MOVE_SEMANTICS_ENABLED
+
 	/// exchange
 	///
 	/// Replaces the value of the first argument with the new value provided.  
@@ -313,6 +317,8 @@ namespace eastl
 			return old_value;
 		}
 	#endif
+
+#endif // EASTL_MOVE_SEMANTICS_ENABLED
 
 	/// as_const
 	///
@@ -388,13 +394,25 @@ namespace eastl
 			: first(), 
 			  second() {}
 
-		// To consider: Use type traits to enable this ctor only if T2 (second is_default_constructible<T2>::value ==
-		// true.)
+		// To consider: Use type traits to enable this ctor only if T2 (second is_default_constructible<T2>::value == true.)
 		EA_CPP14_CONSTEXPR pair(const T1& x)
 			: first(x),
 			  second()
 		{
 		}
+	
+		// GCC has a bug with overloading rvalue and lvalue function templates.
+		// https://gcc.gnu.org/bugzilla/show_bug.cgi?id=54425
+		// 
+		// error: 'eastl::pair<T1, T2>::pair(T1&&) [with T1 = const int&; T2 = const int&]' cannot be overloaded
+		// error: with 'eastl::pair<T1, T2>::pair(const T1&) [with T1 = const int&; T2 = const int&]'
+		#if EASTL_MOVE_SEMANTICS_ENABLED && !defined(EA_COMPILER_GNUC)
+			EA_CPP14_CONSTEXPR pair(T1&& x)
+				: first(eastl::move(x)),
+				  second()
+			{
+			}
+		#endif
 
 		EA_CPP14_CONSTEXPR pair(const T1& x, const T2& y) : first(x), second(y) {}
 
@@ -464,6 +482,36 @@ namespace eastl
 		  #endif
 		#endif
 
+			
+			// Initializes first with arguments of types Args1... obtained by forwarding the elements of first_args and
+			// initializes second with arguments of types Args2... obtained by forwarding the elements of second_args.
+		    template <class... Args1, class... Args2>
+				// TODO(rparolin): Requires: is_constructible_v<first_type, Args1&&...> is true and is_constructible_v<second_type, Args2&&...> is true.
+		    pair(eastl::piecewise_construct_t pwc,
+		         eastl::tuple<Args1...> first_args,
+		         eastl::tuple<Args2...> second_args)
+		        : pair(pwc,
+		               first_args,
+		               second_args,
+		               eastl::make_index_sequence<sizeof...(Args1)>(),
+		               eastl::make_index_sequence<sizeof...(Args2)>())
+		    {
+		    }
+
+		private:
+			// NOTE(rparolin): Internal constructor used to expand the index_sequence required to expand the tuple elements.
+		    template <class... Args1, class... Args2, size_t... I1, size_t... I2>
+		    pair(eastl::piecewise_construct_t,
+		         eastl::tuple<Args1...> first_args,
+		         eastl::tuple<Args2...> second_args,
+		         eastl::index_sequence<I1...>,
+		         eastl::index_sequence<I2...>)
+		        : first(eastl::forward<Args1>(eastl::get<I1>(first_args))...)
+		        , second(eastl::forward<Args2>(eastl::get<I2>(second_args))...)
+		    {
+		    }
+
+		public:
 
 		pair& operator=(const pair& p) EA_NOEXCEPT_IF(eastl::is_nothrow_copy_assignable<T1>::value && eastl::is_nothrow_copy_assignable<T2>::value)
 		{
@@ -809,7 +857,8 @@ namespace eastl
 
 #endif  // EASTL_TUPLE_ENABLED
 
-		}  // namespace eastl
+
+}  // namespace eastl
 
 #ifdef _MSC_VER
 	#pragma warning(pop)

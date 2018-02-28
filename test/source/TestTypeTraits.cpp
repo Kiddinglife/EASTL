@@ -230,7 +230,7 @@ struct NoThrowDestructible
 #if !defined(EA_COMPILER_NO_EXCEPTIONS)
 	struct ThrowDestructible
 	{
-		~ThrowDestructible() throw(int) { throw(int()); }
+		~ThrowDestructible() noexcept(false) { throw(int()); }
 	};
 
 	struct ThrowDestructibleNoexceptFalse
@@ -458,8 +458,6 @@ namespace
 
 int TestTypeTraits()
 {
-	EASTLTest_Printf("TestTypeTraits\n");
-
 	int nErrorCount = 0;
 
 
@@ -1020,6 +1018,7 @@ int TestTypeTraits()
 		// These might not succeed unless the implementation is conforming.
 		static_assert((eastl::is_assignable<Assignable, Assignable>::value == true),  "is_assignable failure");
 		static_assert((eastl::is_assignable<Assignable, Pod1>::value       == true),  "is_assignable failure");
+		static_assert((eastl::is_assignable<PodA&, PodA>::value            == true),  "is_assignable failure");
 
 		// These cannot succeed unless the implementation is conforming.
 		static_assert((eastl::is_assignable<void, void>::value             == false),  "is_assignable failure");
@@ -1148,61 +1147,14 @@ int TestTypeTraits()
 		static_assert(is_trivially_copy_assignable<const char*>::value == true, "is_trivially_copy_assignable failure");
 		static_assert(is_trivially_copy_assignable<NoTrivialCopy1>::value == false, "is_trivially_copy_assignable failure");
 
-#ifdef INTENTIONALLY_DISABLED
+	#ifdef INTENTIONALLY_DISABLED
 		// These tests currently fail on clang, but they would pass using the std::is_trivially_copy_assignable trait.  We should
 		// determine if our implementation is correct, or if clang is actually incorrect.
 		static_assert(is_trivially_copy_assignable<const int>::value == true, "is_trivially_copy_assignable failure");
 		static_assert(is_trivially_copy_assignable<const PodA>::value == true, "is_trivially_copy_assignable failure");
 		static_assert(is_trivially_copy_assignable<PodA>::value == true, "is_trivially_copy_assignable failure");
-#endif
-
-
-		// This relatively complex test is to prevent a regression on VS2013.  The data types have what may appear to be
-		// strange names (for test code) because the code is based on a test case extracted from the Frostbite codebase.
-		// This test is actually invalid and should be removed as const data memebers are problematic for STL container
-		// implementations. (ie.  they prevent constructors from being generated).
-		{
-			EA_DISABLE_VC_WARNING(4512) // disable warning : "assignment operator could not be generated"
-#if (defined(_MSC_VER) && (_MSC_VER >= 1900))  // VS2015-preview and later.
-			EA_DISABLE_VC_WARNING(5025) // disable warning : "move assignment operator could not be generated"
-			EA_DISABLE_VC_WARNING(4626) // disable warning : "assignment operator was implicitly defined as deleted"
-			EA_DISABLE_VC_WARNING(5027) // disable warning : "move assignment operator was implicitly defined as deleted"
-#endif
-
-			struct ScenarioRefEntry
-			{
-				ScenarioRefEntry(const eastl::string& contextDatabase) : ContextDatabase(contextDatabase) {}
-				struct RowEntry
-				{
-					RowEntry()
-						:Controller(gEmptyStringInstance)
-					{
-					}
-					const eastl::string& Controller;
-				};
-				const eastl::string& ContextDatabase;
-				eastl::vector<RowEntry> Rows;
-			};
-			typedef eastl::vector<ScenarioRefEntry> ScenarRefData;
-			struct AntMetaDataRecord
-			{
-				ScenarRefData ScenarioRefs;
-			};
-
-			typedef eastl::iterator_traits<eastl::generic_iterator<AntMetaDataRecord*, void> >::value_type value_type;
-			static_assert((eastl::is_trivially_copy_assignable<value_type>::value == false), "is_trivially_copy_assignable failure");
-
-			#if (defined(_MSC_VER) && (_MSC_VER >= 1900))  // VS2015-preview and later.
-				EA_RESTORE_VC_WARNING() // disable warning 5025:  "move assignment operator could not be generated"
-				EA_RESTORE_VC_WARNING() // disable warning 4626:  "assignment operator was implicitly defined as deleted"
-				EA_RESTORE_VC_WARNING() // disable warning 5027:  "move assignment operator was implicitly defined as deleted"
-			#endif
-			EA_RESTORE_VC_WARNING()
-		}
+	#endif
 	}
-
-
-
 	// is_trivially_default_constructible
 	// To do.
 
@@ -1361,11 +1313,8 @@ int TestTypeTraits()
 	// common_type
 	static_assert((is_same<common_type<NonPod2*>::type, NonPod2*>::value), "common_type failure");
 	static_assert((is_same<common_type<int>::type, int>::value), "common_type failure");
-	#if EASTL_TYPE_TRAIT_common_type_CONFORMANCE
-		// The C++11 standard results in common_type<int, int> => int&&, but that's being revised for C++14 to be => int.
-		// http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2013/n3687.html#2141
-		//static_assert((is_same<common_type<int, int>::type, int&&>::value), "common_type failure");
-	#endif
+	static_assert((is_same<common_type<void, void>::type, void>::value), "common_type failure");
+	static_assert((is_same<common_type<int, int>::type, int>::value), "common_type failure");
 
 
 	// rank
@@ -1744,6 +1693,83 @@ int TestTypeTraits()
 		}
 	}
 	#endif
+
+	// conjunction
+	{
+		static_assert( conjunction<>::value, "conjunction failure");
+		static_assert(!conjunction<false_type>::value, "conjunction failure");
+		static_assert(!conjunction<false_type, false_type>::value, "conjunction failure");
+		static_assert(!conjunction<false_type, false_type, false_type>::value, "conjunction failure");
+		static_assert(!conjunction<false_type, false_type, false_type, true_type>::value, "conjunction failure");
+		static_assert(!conjunction<false_type, false_type, true_type, true_type>::value, "conjunction failure");
+		static_assert(!conjunction<false_type, true_type, true_type, true_type>::value, "conjunction failure");
+		static_assert(!conjunction<true_type, true_type, true_type, true_type, false_type>::value, "conjunction failure");
+		static_assert(!conjunction<true_type, false_type, true_type, true_type, true_type>::value, "conjunction failure");
+		static_assert( conjunction<true_type, true_type, true_type, true_type, true_type>::value, "conjunction failure");
+		static_assert( conjunction<true_type, true_type, true_type, true_type>::value, "conjunction failure");
+		static_assert( conjunction<true_type, true_type, true_type>::value, "conjunction failure");
+		static_assert( conjunction<true_type>::value, "conjunction failure");
+
+	#if EASTL_VARIABLE_TEMPLATES_ENABLED
+		static_assert( conjunction_v<>, "conjunction failure");
+		static_assert(!conjunction_v<false_type>, "conjunction failure");
+		static_assert(!conjunction_v<false_type, false_type>, "conjunction failure");
+		static_assert(!conjunction_v<false_type, false_type, false_type>, "conjunction failure");
+		static_assert(!conjunction_v<false_type, false_type, false_type, true_type>, "conjunction failure");
+		static_assert(!conjunction_v<false_type, false_type, true_type, true_type>, "conjunction failure");
+		static_assert(!conjunction_v<false_type, true_type, true_type, true_type>, "conjunction failure");
+		static_assert(!conjunction_v<true_type, true_type, true_type, true_type, false_type>, "conjunction failure");
+		static_assert(!conjunction_v<true_type, false_type, true_type, true_type, true_type>, "conjunction failure");
+		static_assert( conjunction_v<true_type, true_type, true_type, true_type, true_type>, "conjunction failure");
+		static_assert( conjunction_v<true_type, true_type, true_type, true_type>, "conjunction failure");
+		static_assert( conjunction_v<true_type, true_type, true_type>, "conjunction failure");
+		static_assert( conjunction_v<true_type>, "conjunction failure");
+	#endif
+	}
+	
+	// disjunction
+	{
+		static_assert(!disjunction<>::value, "disjunction failure");
+		static_assert(!disjunction<false_type>::value, "disjunction failure");
+		static_assert(!disjunction<false_type, false_type>::value, "disjunction failure");
+		static_assert(!disjunction<false_type, false_type, false_type>::value, "disjunction failure");
+		static_assert( disjunction<false_type, false_type, false_type, true_type>::value, "disjunction failure");
+		static_assert( disjunction<false_type, false_type, true_type, true_type>::value, "disjunction failure");
+		static_assert( disjunction<false_type, true_type, true_type, true_type>::value, "disjunction failure");
+		static_assert( disjunction<true_type, true_type, true_type, true_type, false_type>::value, "disjunction failure");
+		static_assert( disjunction<true_type, false_type, true_type, true_type, true_type>::value, "disjunction failure");
+		static_assert( disjunction<true_type, true_type, true_type, true_type, true_type>::value, "disjunction failure");
+		static_assert( disjunction<true_type, true_type, true_type, true_type>::value, "disjunction failure");
+		static_assert( disjunction<true_type, true_type, true_type>::value, "disjunction failure");
+		static_assert( disjunction<true_type>::value, "disjunction failure");
+
+	#if EASTL_VARIABLE_TEMPLATES_ENABLED
+		static_assert(!disjunction_v<>, "disjunction failure");
+		static_assert(!disjunction_v<false_type>, "disjunction failure");
+		static_assert(!disjunction_v<false_type, false_type>, "disjunction failure");
+		static_assert(!disjunction_v<false_type, false_type, false_type>, "disjunction failure");
+		static_assert( disjunction_v<false_type, false_type, false_type, true_type>, "disjunction failure");
+		static_assert( disjunction_v<false_type, false_type, true_type, true_type>, "disjunction failure");
+		static_assert( disjunction_v<false_type, true_type, true_type, true_type>, "disjunction failure");
+		static_assert( disjunction_v<true_type, true_type, true_type, true_type, false_type>, "disjunction failure");
+		static_assert( disjunction_v<true_type, false_type, true_type, true_type, true_type>, "disjunction failure");
+		static_assert( disjunction_v<true_type, true_type, true_type, true_type, true_type>, "disjunction failure");
+		static_assert( disjunction_v<true_type, true_type, true_type, true_type>, "disjunction failure");
+		static_assert( disjunction_v<true_type, true_type, true_type>, "disjunction failure");
+		static_assert( disjunction_v<true_type>, "disjunction failure");
+	#endif
+	}
+
+	// negation
+	{
+		static_assert( negation<false_type>::value, "negation failure");
+		static_assert(!negation<true_type>::value, "negation failure");
+
+		#if EASTL_VARIABLE_TEMPLATES_ENABLED
+			static_assert( negation_v<false_type>, "negation failure");
+			static_assert(!negation_v<true_type>, "negation failure");
+		#endif
+	}
 
 	return nErrorCount;
 }

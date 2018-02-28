@@ -12,7 +12,7 @@
 //
 // Any instance of optional<T> at any given time either contains a value or does not
 // contain a value. When an instance of optional<T> contains a value, it means that an
-// object of type T, referred to as the optional object’s contained value, is allocated
+// object of type T, referred to as the optional object's contained value, is allocated
 // within the storage of the optional object. Implementations are not permitted to use
 // additional storage, such as dynamic memory, to allocate its contained value. 
 //
@@ -31,13 +31,19 @@
 #include <EASTL/internal/config.h>
 #include <EASTL/initializer_list.h>
 #include <EASTL/memory.h> // eastl::addressof
+#include <EASTL/internal/in_place_t.h> // eastl::in_place_t
 
 #if defined(EASTL_OPTIONAL_ENABLED) && EASTL_OPTIONAL_ENABLED
 
-EA_DISABLE_VC_WARNING(4583) // destructor is not implicitly called
+EA_DISABLE_VC_WARNING(4582 4583) // constructor/destructor is not implicitly called
 
 namespace eastl
 {
+	#if EASTL_EXCEPTIONS_ENABLED
+		#define EASTL_OPTIONAL_NOEXCEPT 
+	#else
+		#define EASTL_OPTIONAL_NOEXCEPT EA_NOEXCEPT
+	#endif
 
 	///////////////////////////////////////////////////////////////////////////////
 	/// nullopt_t
@@ -52,22 +58,13 @@ namespace eastl
 
 
 	///////////////////////////////////////////////////////////////////////////////
-	/// in_place_t
-	///
-	/// used to disambiguate overloads that take arguments (possibly a parameter pack) for in-place construction of some value.
-	///
-	struct in_place_t {};
-	EA_CONSTEXPR in_place_t in_place{};
-
-
-	///////////////////////////////////////////////////////////////////////////////
 	/// bad_optional_access
 	///
 	#if EASTL_EXCEPTIONS_ENABLED
 		struct bad_optional_access : public std::logic_error
 		{
 			bad_optional_access() : std::logic_error("eastl::bad_optional_access exception") {}
-			virtual ~bad_optional_access() EA_NOEXCEPT;
+			virtual ~bad_optional_access() EA_NOEXCEPT {}
 		};
 	#endif
 
@@ -84,6 +81,7 @@ namespace eastl
 			inline optional_storage() EA_NOEXCEPT : empty_val('\0') {}
 			inline optional_storage(const optional_storage& other) : val(other.val), engaged(other.engaged) { }
 			inline optional_storage(const value_type& v) : val(v), engaged(true) {}
+			inline optional_storage(value_type &&v) : val(eastl::move(v)), engaged(true) {}
 			inline ~optional_storage()
 			{
 				if (engaged)
@@ -132,6 +130,7 @@ namespace eastl
 			inline optional_storage() EA_NOEXCEPT : empty_val('\0') {}
 			inline optional_storage(const optional_storage& other) : val(other.val), engaged(other.engaged) { }
 			inline optional_storage(const value_type& v) : val(v), engaged(true) {}
+			inline optional_storage(value_type &&v) : val(eastl::move(v)), engaged(true) {}
 
 			// Removed to make optional<T> trivially destructible when T is trivially destructible.
 			//
@@ -204,14 +203,14 @@ namespace eastl
 		#if EASTL_VARIADIC_TEMPLATES_ENABLED 
 			template <typename... Args>
 			inline explicit optional(in_place_t, Args&&... args)
-				: base_type(in_place_t{}, eastl::forward<Args>(args)...) {}
+				: base_type(in_place, eastl::forward<Args>(args)...) {}
 
 	        template <typename U,
 	                  typename... Args,
 	                  typename = typename eastl::enable_if<
 	                      eastl::is_constructible<T, std::initializer_list<U>&, Args&&...>::value>::type>
 	        inline explicit optional(in_place_t, std::initializer_list<U> ilist, Args&&... args)
-	            : base_type(in_place_t{}, ilist, eastl::forward<Args>(args)...) {}
+	            : base_type(in_place, ilist, eastl::forward<Args>(args)...) {}
         #endif
 
 	    inline optional& operator=(nullopt_t)
@@ -252,7 +251,9 @@ namespace eastl
 		    return *this;
 	    }
 
-	    inline explicit operator bool() const { return engaged; }
+	    EA_CONSTEXPR inline explicit operator bool() const { return engaged; }
+
+		EA_CONSTEXPR inline bool has_value() const EA_NOEXCEPT { return engaged; }
 
 	    template <class U>
 	    inline value_type value_or(U&& default_value) const
@@ -264,15 +265,15 @@ namespace eastl
 
 		inline const T& value()&              { return get_value_ref(); }
 		inline const T& value() const&        { return get_value_ref(); }
-		inline T&& value()&&                  { return get_value_ref(); }
-		inline const T&& value() const&&      { return get_value_ref(); }
+		inline T&& value()&&                  { return get_rvalue_ref(); }
+		inline const T&& value() const&&      { return get_rvalue_ref(); }
 
 	    inline T* operator->()                { return get_value_address(); }
 	    inline const T* operator->() const    { return get_value_address(); }
 	    inline T& operator*()&                { return get_value_ref(); }
-		inline T&& operator*()&&              { return get_value_ref(); }
+		inline T&& operator*()&&              { return get_rvalue_ref(); }
 	    inline const T& operator*() const&    { return get_value_ref(); }
-		inline const T&& operator*() const&&  { return get_value_ref(); }
+		inline const T&& operator*() const&&  { return get_rvalue_ref(); }
 
 		#if EASTL_VARIADIC_TEMPLATES_ENABLED
 			template <class... Args>
@@ -315,6 +316,15 @@ namespace eastl
 		    }
 	    }
 
+		inline void reset()
+		{
+			if (engaged)
+			{
+				destruct_value();
+				engaged = false;
+			}
+		}
+
 	private:
 
 	    inline void construct_value(const value_type& v)
@@ -323,16 +333,7 @@ namespace eastl
 	    inline void construct_value(value_type&& v)
 			{ ::new (eastl::addressof(val)) value_type(eastl::move(v)); }
 
-	    inline void reset()
-		{
-			if(engaged)
-			{
-				destruct_value();
-				engaged = false;
-			}
-		}
-
-	    inline T* get_value_address() EA_NOEXCEPT
+	    inline T* get_value_address() EASTL_OPTIONAL_NOEXCEPT
 	    {
             #if EASTL_EXCEPTIONS_ENABLED
 				if(!engaged) 
@@ -343,7 +344,7 @@ namespace eastl
 			return eastl::addressof(val);
 	    }
 
-	    inline const T* get_value_address() const EA_NOEXCEPT
+	    inline const T* get_value_address() const EASTL_OPTIONAL_NOEXCEPT
 	    {
             #if EASTL_EXCEPTIONS_ENABLED
 				if(!engaged) 
@@ -354,7 +355,7 @@ namespace eastl
 			return eastl::addressof(val);
 	    }
 
-	    inline value_type& get_value_ref() EA_NOEXCEPT
+	    inline value_type& get_value_ref() EASTL_OPTIONAL_NOEXCEPT
 	    {
             #if EASTL_EXCEPTIONS_ENABLED
 				if(!engaged) 
@@ -365,7 +366,7 @@ namespace eastl
 		    return val;
 	    }
 
-	    inline const value_type& get_value_ref() const EA_NOEXCEPT
+	    inline const value_type& get_value_ref() const EASTL_OPTIONAL_NOEXCEPT
 	    {
             #if EASTL_EXCEPTIONS_ENABLED
 				if(!engaged) 
@@ -374,6 +375,17 @@ namespace eastl
 				EASTL_ASSERT_MSG(engaged, "no value to retrieve");
 			#endif
 		    return val;
+	    }
+
+	    inline value_type&& get_rvalue_ref() EASTL_OPTIONAL_NOEXCEPT
+	    {
+            #if EASTL_EXCEPTIONS_ENABLED
+				if(!engaged) 
+					throw bad_optional_access();
+			#elif EASTL_ASSERT_ENABLED
+				EASTL_ASSERT_MSG(engaged, "no value to retrieve");
+			#endif
+		    return eastl::move(val);
 	    }
     };
 
@@ -581,6 +593,8 @@ namespace eastl
     {
 	    return optional<typename eastl::decay<T>::type>(eastl::forward<T>(value));
     }
+
+	#undef EASTL_OPTIONAL_NOEXCEPT 
 
 }  // namespace eastl
 
