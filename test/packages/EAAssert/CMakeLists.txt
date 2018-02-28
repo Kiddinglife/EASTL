@@ -2,7 +2,7 @@
 # Copyright (C) Electronic Arts Inc.  All rights reserved.
 #-------------------------------------------------------------------------------------------
 cmake_minimum_required(VERSION 3.1)
-project(EAAssert CXX)
+project(EAAssert C)
 
 #-------------------------------------------------------------------------------------------
 # Header only library 
