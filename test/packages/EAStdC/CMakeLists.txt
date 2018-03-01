@@ -2,7 +2,7 @@
 # Copyright (C) Electronic Arts Inc.  All rights reserved.
 #-------------------------------------------------------------------------------------------
 cmake_minimum_required(VERSION 3.1)
-project(EAStdC CXX)
+project(EAStdC C)
 
 #-------------------------------------------------------------------------------------------
 # Library definition
@@ -21,7 +21,7 @@ add_definitions(-D_CHAR16T)
 # Compiler Flags
 #-------------------------------------------------------------------------------------------
 set (CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH};${CMAKE_CURRENT_SOURCE_DIR}/../../../scripts/CMake")
-include(CommonCppFlags)
+include(CommonCFlags)
 
 #-------------------------------------------------------------------------------------------
 # Include directories
